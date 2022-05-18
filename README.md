@@ -1,2 +1,2 @@
-# subquery-contract-cli
-cli control subquery contracts.
+# subquery contracts test cli
+cli control subquery contracts local/testnet.
