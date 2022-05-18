@@ -8,7 +8,7 @@ use web3::{
     Web3,
 };
 
-async fn transfer(web3: &Web3<Http>, sk: &SecretKey, address: Address, amount: i64) {
+async fn transfer(web3: &Web3<Http>, sk: &SecretKey, address: Address, amount: i128) {
     println!("Transfer FEE to: {:?} ...", address);
     let tx = TransactionParameters {
         to: Some(address),
@@ -128,15 +128,15 @@ async fn register_indexer(
     let tx = TransactionParameters {
         to: Some(contract.address()),
         data: Bytes(fn_data),
-        //nonce: Some(U256::from(1i32)),
         ..Default::default()
     };
     let signed = web3.accounts().sign_transaction(tx, sk).await.unwrap();
-    let _tx_hash = web3
+    let tx_hash = web3
         .eth()
         .send_raw_transaction(signed.raw_transaction)
         .await
         .unwrap();
+    println!("tx: {:?}", tx_hash);
 
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     let result: bool = contract
@@ -148,12 +148,14 @@ async fn register_indexer(
 
 #[tokio::main]
 async fn main() {
+    //let miner_str = "df57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e";
     let miner_str = "5fb92d6e98884f76de468fa3f6278f8807c48bebc13595d45af5bdc4da702133";
-    let indexer_str = "f01e387d20ac6b12d0b334b394735a1756175aec31087c3c9acc5af32838d678";
+    //let indexer_str = "f01e387d20ac6b12d0b334b394735a1756175aec31087c3c9acc5af32838d678";
+    let indexer_str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let consumer_str = "70d76f81693955b3c90f4f0ba399853d7b43a37448bb2947a5dbfc18b592e91d";
 
     // moonbeam local rpc.
-    let web3_endpoint: String = String::from("http://127.0.0.1:9933");
+    let web3_endpoint: String = String::from("http://127.0.0.1:8545");
 
     let miner_sk = SecretKey::from_slice(&hex::decode(miner_str).unwrap()).unwrap();
     let miner = SecretKeyRef::new(&miner_sk);
@@ -208,17 +210,20 @@ async fn main() {
 
     println!("\x1b[92m------------------------------------\x1b[00m");
     // Transfer DEV main token to indexer/consumer
-    //transfer(&web3, &miner_sk, i_address, 1_000_000_000_000_000).await;
-    //transfer(&web3, &miner_sk, c_address, 1_000_000_000_000_000).await;
+    //transfer(&web3, &miner_sk, i_address, 10_000_000_000_000_000_000).await;
+    //transfer(&web3, &miner_sk, c_address, 1_000_000_000_000_000_000).await;
 
     println!("\x1b[92m------------------------------------\x1b[00m");
     // Transfer SQT to indexer/consumer
-    transfer_token(&web3, &contracts["SQToken"], &miner_sk, i_address, 1000000).await;
+    //transfer_token(&web3, &contracts["SQToken"], &miner_sk, i_address, 1000000).await;
     //transfer_token(&web3, &contracts["SQToken"], &miner_sk, c_address, 1000000).await;
 
     println!("\x1b[92m------------------------------------\x1b[00m");
     // Register indexer
     let staking = contracts["Staking"].address();
-    token_approve(&web3, &contracts["SQToken"], &indexer_sk, staking, 1000000).await;
-    register_indexer(&web3, &contracts["IndexerRegistry"], &indexer_sk, 10_000).await;
+    let channel = contracts["StateChannel"].address();
+    //token_approve(&web3, &contracts["SQToken"], &indexer_sk, staking, 1000000).await;
+    //token_approve(&web3, &contracts["SQToken"], &consumer_sk, channel, 1000000).await;
+
+    register_indexer(&web3, &contracts["IndexerRegistry"], &indexer_sk, 100000).await;
 }
