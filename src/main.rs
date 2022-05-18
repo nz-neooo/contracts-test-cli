@@ -1,19 +1,38 @@
-use secp256k1::{SecretKey, ONE_KEY};
+use secp256k1::SecretKey;
 use std::collections::HashMap;
 use web3::{
     contract::{tokens::Tokenize, Contract, Options},
-    signing::{Key, SecretKeyRef, Signature},
+    signing::{Key, SecretKeyRef},
     transports::Http,
     types::{Address, Bytes, TransactionParameters, U256},
     Web3,
 };
 
-async fn transfer(
+async fn transfer(web3: &Web3<Http>, sk: &SecretKey, address: Address, amount: i64) {
+    println!("Transfer FEE to: {:?} ...", address);
+    let tx = TransactionParameters {
+        to: Some(address),
+        value: U256::from(amount),
+        ..Default::default()
+    };
+    let signed = web3.accounts().sign_transaction(tx, sk).await.unwrap();
+    let _tx_hash = web3
+        .eth()
+        .send_raw_transaction(signed.raw_transaction)
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let result: U256 = web3.eth().balance(address, None).await.unwrap();
+    println!("{:?} Balance: {:?}", address, result);
+}
+
+async fn transfer_token(
     web3: &Web3<Http>,
     contract: &Contract<Http>,
     sk: &SecretKey,
     address: Address,
-    amount: i32,
+    amount: i64,
 ) {
     println!("Transfer SQT to: {:?} ...", address);
     let fn_data = contract
@@ -27,7 +46,7 @@ async fn transfer(
         ..Default::default()
     };
     let signed = web3.accounts().sign_transaction(tx, sk).await.unwrap();
-    let tx_hash = web3
+    let _tx_hash = web3
         .eth()
         .send_raw_transaction(signed.raw_transaction)
         .await
@@ -38,7 +57,93 @@ async fn transfer(
         .query("balanceOf", (address,), None, Options::default(), None)
         .await
         .unwrap();
-    println!("{:?} Balance: {:?}", address, result);
+    println!("{:?} SQT Balance: {:?}", address, result);
+}
+
+async fn token_approve(
+    web3: &Web3<Http>,
+    contract: &Contract<Http>,
+    sk: &SecretKey,
+    address: Address,
+    amount: i64,
+) {
+    println!("Approve SQT to: {:?} ...", address);
+    let fn_data = contract
+        .abi()
+        .function("increaseAllowance")
+        .and_then(|function| function.encode_input(&(address, U256::from(amount)).into_tokens()))
+        .unwrap();
+    let tx = TransactionParameters {
+        to: Some(contract.address()),
+        data: Bytes(fn_data),
+        ..Default::default()
+    };
+    let signed = web3.accounts().sign_transaction(tx, sk).await.unwrap();
+    let _tx_hash = web3
+        .eth()
+        .send_raw_transaction(signed.raw_transaction)
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let result: U256 = contract
+        .query(
+            "allowance",
+            (SecretKeyRef::new(sk).address(), address),
+            None,
+            Options::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    println!("Approved SQT {:?}", result);
+}
+
+async fn register_indexer(
+    web3: &Web3<Http>,
+    contract: &Contract<Http>,
+    sk: &SecretKey,
+    amount: i64,
+) {
+    let indexer = SecretKeyRef::new(&sk);
+    let address = indexer.address();
+    println!("Register Indexer: {:?} ...", indexer.address());
+    let result: bool = contract
+        .query("isIndexer", (address,), None, Options::default(), None)
+        .await
+        .unwrap();
+    if result {
+        println!("Had Register Indexer: {}", result);
+        return;
+    }
+
+    let fn_data = contract
+        .abi()
+        .function("registerIndexer")
+        .and_then(|function| {
+            function.encode_input(&(U256::from(amount), [0u8; 32], U256::from(0i32)).into_tokens())
+        })
+        .unwrap();
+    //let nonce = web3.eth().transaction_count(address, None).await.unwrap();
+    let tx = TransactionParameters {
+        to: Some(contract.address()),
+        data: Bytes(fn_data),
+        //nonce: Some(U256::from(1i32)),
+        ..Default::default()
+    };
+    let signed = web3.accounts().sign_transaction(tx, sk).await.unwrap();
+    let _tx_hash = web3
+        .eth()
+        .send_raw_transaction(signed.raw_transaction)
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let result: bool = contract
+        .query("isIndexer", (address,), None, Options::default(), None)
+        .await
+        .unwrap();
+    println!("Register Indexer: {}", result);
 }
 
 #[tokio::main]
@@ -54,15 +159,17 @@ async fn main() {
     let miner = SecretKeyRef::new(&miner_sk);
     let indexer_sk = SecretKey::from_slice(&hex::decode(indexer_str).unwrap()).unwrap();
     let indexer = SecretKeyRef::new(&indexer_sk);
+    let i_address = indexer.address();
     let consumer_sk = SecretKey::from_slice(&hex::decode(consumer_str).unwrap()).unwrap();
     let consumer = SecretKeyRef::new(&consumer_sk);
+    let c_address = consumer.address();
 
     let web3 = Web3::new(Http::new(&web3_endpoint).unwrap());
     let file = std::fs::File::open("./contracts/local.json").unwrap();
     let reader = std::io::BufReader::new(file);
     let list: serde_json::Value = serde_json::from_reader(reader).unwrap();
     let mut contracts = HashMap::new();
-    for name in vec!["SQToken", "StateChannel", "IndexerRegistry"] {
+    for name in vec!["SQToken", "StateChannel", "IndexerRegistry", "Staking"] {
         contracts.insert(
             name,
             Contract::from_json(
@@ -83,7 +190,10 @@ async fn main() {
         .query("getMinter", (), None, Options::default(), None)
         .await
         .unwrap();
-    println!("Token Miner: {:?} ?= {:?}", result, miner.address());
+    println!("Token Miner: {:?} != {:?}", result, miner.address());
+    let result: U256 = web3.eth().balance(miner.address(), None).await.unwrap();
+    println!("Miner Balance: {:?}", result);
+
     let result: U256 = contracts["SQToken"]
         .query(
             "balanceOf",
@@ -94,27 +204,21 @@ async fn main() {
         )
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    println!("Miner Balance: {:?}", result);
+    println!("Miner SQT Balance: {:?}", result);
 
-    // Transfer SQT to indexer/consumer
-    transfer(
-        &web3,
-        &contracts["SQToken"],
-        &miner_sk,
-        indexer.address(),
-        10000,
-    )
-    .await;
-
-    transfer(
-        &web3,
-        &contracts["SQToken"],
-        &miner_sk,
-        consumer.address(),
-        10000,
-    )
-    .await;
-
+    println!("\x1b[92m------------------------------------\x1b[00m");
     // Transfer DEV main token to indexer/consumer
+    //transfer(&web3, &miner_sk, i_address, 1_000_000_000_000_000).await;
+    //transfer(&web3, &miner_sk, c_address, 1_000_000_000_000_000).await;
+
+    println!("\x1b[92m------------------------------------\x1b[00m");
+    // Transfer SQT to indexer/consumer
+    transfer_token(&web3, &contracts["SQToken"], &miner_sk, i_address, 1000000).await;
+    //transfer_token(&web3, &contracts["SQToken"], &miner_sk, c_address, 1000000).await;
+
+    println!("\x1b[92m------------------------------------\x1b[00m");
+    // Register indexer
+    let staking = contracts["Staking"].address();
+    token_approve(&web3, &contracts["SQToken"], &indexer_sk, staking, 1000000).await;
+    register_indexer(&web3, &contracts["IndexerRegistry"], &indexer_sk, 10_000).await;
 }

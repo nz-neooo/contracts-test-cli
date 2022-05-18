@@ -4,3 +4,4 @@ Cargo.lock
 log.txt
 *.key
 demo*
+contracts/local.json
